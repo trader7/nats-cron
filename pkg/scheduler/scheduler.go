@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-co-op/gocron"
 	"github.com/nats-io/nats.go"
+	"github.com/oklog/ulid/v2"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
@@ -138,7 +140,19 @@ func (s *Scheduler) scheduleJob(data []byte) {
 	run := func() {
 		s.logger.Info("Executing job", zap.String("subject", jobCopy.Target.Subject))
 		now := time.Now()
-		err := s.nc.Publish(jobCopy.Target.Subject, []byte(jobCopy.Payload.Data))
+		
+		// Generate payload data - use ULID if no data specified
+		var payloadData []byte
+		if jobCopy.Payload.Data == "" {
+			// Generate a ULID with current timestamp
+			ulidValue := ulid.MustNew(ulid.Timestamp(now), rand.Reader)
+			payloadData = []byte(ulidValue.String())
+			s.logger.Debug("Generated ULID for empty payload", zap.String("subject", jobCopy.Target.Subject), zap.String("ulid", ulidValue.String()))
+		} else {
+			payloadData = []byte(jobCopy.Payload.Data)
+		}
+		
+		err := s.nc.Publish(jobCopy.Target.Subject, payloadData)
 		if err != nil {
 			s.logger.Error("Publish failed", zap.String("subject", jobCopy.Target.Subject), zap.Error(err))
 		} else {

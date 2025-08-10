@@ -1,0 +1,13 @@
+{
+  "id": "ulid-test-job",
+  "target": {
+    "subject": "test.ulid"
+  },
+  "payload": {
+    "type": "text",
+    "data": ""
+  },
+  "schedule": {
+    "every": "10s"
+  }
+}
