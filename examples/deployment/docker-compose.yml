@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # NATS Server with JetStream
+  nats:
+    image: nats:2.10-alpine
+    command: [
+      "--jetstream",
+      "--store_dir=/data",
+      "--http_port=8222"
+    ]
+    ports:
+      - "4222:4222"  # NATS client port
+      - "8222:8222"  # HTTP monitoring port
+    volumes:
+      - nats_data:/data
+
+  # NATS Cron Scheduler
+  nats-cron:
+    image: nats-cron:latest
+    environment:
+      - NATS_URL=nats://nats:4222
+      - LOG_LEVEL=info
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  # Example worker service
+  example-worker:
+    build: ../workers
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+volumes:
+  nats_data:

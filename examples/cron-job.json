@@ -1,0 +1,13 @@
+{
+  "id": "daily-report",
+  "target": {
+    "subject": "reports.daily"
+  },
+  "payload": {
+    "type": "json",
+    "data": "{\"type\":\"daily_report\",\"date\":\"$(date +%Y-%m-%d)\"}"
+  },
+  "schedule": {
+    "cron": "0 9 * * *"
+  }
+}

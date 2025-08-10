@@ -1,0 +1,13 @@
+{
+  "id": "heartbeat-job",
+  "target": {
+    "subject": "system.heartbeat"
+  },
+  "payload": {
+    "type": "json",
+    "data": "{\"timestamp\":\"2024-01-01T00:00:00Z\",\"service\":\"nats-cron\"}"
+  },
+  "schedule": {
+    "every": "30s"
+  }
+}

@@ -1,0 +1,3 @@
+{"level":"info","time":"2025-08-05T23:00:00.118-0700","caller":"nats-cron/main.go:78","msg":"NATS Cron service started","instance_id":"Gareths-MacBook-Pro.local","nats_url":"nats://127.0.0.1:4222"}
+{"level":"info","time":"2025-08-05T23:00:58.876-0700","caller":"nats-cron/main.go:90","msg":"Shutting down..."}
+{"level":"info","time":"2025-08-05T23:00:58.876-0700","caller":"nats-cron/main.go:103","msg":"Service stopped"}
