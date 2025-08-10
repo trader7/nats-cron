@@ -5,6 +5,7 @@ go 1.23.4
 require (
 	github.com/go-co-op/gocron v1.37.0
 	github.com/nats-io/nats.go v1.44.0
+	github.com/oklog/ulid/v2 v2.1.0
 	github.com/ripienaar/nats-kv-leader-elect v0.0.0-20211103102849-959bf24a85de
 	github.com/robfig/cron/v3 v3.0.1
 	go.uber.org/zap v1.27.0
