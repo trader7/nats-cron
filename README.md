@@ -43,7 +43,7 @@ git clone https://github.com/trader7/nats-cron.git
 cd nats-cron
 make build
 
-# Start NATS with JetStream
+# Start NATS with JetStream (download nats-server from https://github.com/nats-io/nats-server/releases)
 nats-server -js &
 
 # Start NATS Cron scheduler
