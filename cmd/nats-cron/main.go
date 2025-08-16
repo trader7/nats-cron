@@ -55,7 +55,7 @@ func main() {
 
 	// Create scheduler service
 	sched := scheduler.New(nc, js, kv, logger)
-	
+
 	// Create election manager
 	electionMgr := election.New(js, cfg.InstanceID, logger)
 
@@ -75,7 +75,7 @@ func main() {
 	// Add service endpoints
 	addServiceEndpoints(service, sched, electionMgr, logger)
 
-	logger.Info("NATS Cron service started", 
+	logger.Info("NATS Cron service started",
 		zap.String("instance_id", cfg.InstanceID),
 		zap.String("nats_url", cfg.NATSURL))
 
@@ -122,10 +122,10 @@ func addServiceEndpoints(service micro.Service, sched *scheduler.Scheduler, elec
 			req.Error("400", "Failed to create job", []byte(err.Error()))
 			return
 		}
-		
+
 		// Manually trigger job scheduling since KV watch might not catch it
 		sched.ScheduleJobFromData(req.Data())
-		
+
 		req.RespondJSON(map[string]string{"status": "created"})
 	}), micro.WithEndpointSubject("nats-cron.jobs.create")); err != nil {
 		logger.Fatal("Failed to add jobs.create endpoint", zap.Error(err))
@@ -175,7 +175,7 @@ func addServiceEndpoints(service micro.Service, sched *scheduler.Scheduler, elec
 			req.Error("400", "Failed to delete jobs", []byte(err.Error()))
 			return
 		}
-		
+
 		req.RespondJSON(map[string]interface{}{
 			"deleted": deleted,
 			"count":   len(deleted),
@@ -215,7 +215,6 @@ func addServiceEndpoints(service micro.Service, sched *scheduler.Scheduler, elec
 		logger.Fatal("Failed to add status endpoint", zap.Error(err))
 	}
 }
-
 
 func printUsage() {
 	fmt.Println("NATS Cron Scheduler")

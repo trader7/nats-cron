@@ -27,7 +27,7 @@ func New(js nats.JetStreamContext, instanceID string, logger *zap.Logger) *Manag
 
 func (m *Manager) Start(ctx context.Context, onLeader func(context.Context)) {
 	bucketName := "scheduler_leader"
-	
+
 	// Create election bucket with fast failover TTL (minimum allowed is 30s)
 	kv, err := m.js.CreateKeyValue(&nats.KeyValueConfig{
 		Bucket: bucketName,

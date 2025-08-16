@@ -199,7 +199,7 @@ func deleteJob(nc *nats.Conn, args []string) {
 	}
 
 	subject := args[0]
-	
+
 	// Check if this is a wildcard pattern
 	if strings.Contains(subject, "*") || strings.Contains(subject, ">") {
 		deleteJobsWithPattern(nc, subject)
@@ -218,12 +218,12 @@ func deleteJob(nc *nats.Conn, args []string) {
 
 	var response map[string]string
 	json.Unmarshal(msg.Data, &response)
-	
+
 	if errMsg, exists := response["error"]; exists {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", errMsg)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Job deleted: %s\n", subject)
 }
 
@@ -265,7 +265,7 @@ func deleteJobsWithPattern(nc *nats.Conn, pattern string) {
 
 	var confirm string
 	fmt.Scanln(&confirm)
-	
+
 	if confirm != "y" && confirm != "Y" && confirm != "yes" {
 		fmt.Println("Deletion cancelled")
 		return
@@ -287,7 +287,7 @@ func deleteJobsWithPattern(nc *nats.Conn, pattern string) {
 
 		var response map[string]string
 		json.Unmarshal(msg.Data, &response)
-		
+
 		if errMsg, exists := response["error"]; exists {
 			fmt.Fprintf(os.Stderr, "Error deleting job %s: %s\n", subject, errMsg)
 			failed++
@@ -309,17 +309,17 @@ func matchesPattern(subject, pattern string) bool {
 	if subject == pattern {
 		return true
 	}
-	
+
 	// No wildcards, must be exact match
 	if !strings.Contains(pattern, "*") && !strings.Contains(pattern, ">") {
 		return false
 	}
-	
+
 	subjectTokens := strings.Split(subject, ".")
 	patternTokens := strings.Split(pattern, ".")
-	
+
 	si, pi := 0, 0
-	
+
 	for pi < len(patternTokens) && si < len(subjectTokens) {
 		switch patternTokens[pi] {
 		case "*":
@@ -338,7 +338,7 @@ func matchesPattern(subject, pattern string) bool {
 			pi++
 		}
 	}
-	
+
 	// Check if we consumed all tokens correctly
 	if pi < len(patternTokens) {
 		// Remaining pattern tokens
@@ -349,7 +349,7 @@ func matchesPattern(subject, pattern string) bool {
 		// Unmatched pattern tokens (not ending with >)
 		return false
 	}
-	
+
 	// All pattern tokens consumed, subject should also be fully consumed
 	return si == len(subjectTokens)
 }
@@ -360,14 +360,14 @@ func isValidCronExpression(expr string) bool {
 	if len(fields) != 5 {
 		return false
 	}
-	
+
 	// Basic validation of each field
 	for i, field := range fields {
 		if !isValidCronField(field, i) {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -377,7 +377,7 @@ func isValidCronField(field string, fieldType int) bool {
 	if field == "*" {
 		return true
 	}
-	
+
 	// Check for step notation (*/n or range/n)
 	if strings.Contains(field, "/") {
 		parts := strings.Split(field, "/")
@@ -394,7 +394,7 @@ func isValidCronField(field string, fieldType int) bool {
 		}
 		return true
 	}
-	
+
 	// Check for ranges (1-5)
 	if strings.Contains(field, "-") {
 		parts := strings.Split(field, "-")
@@ -403,7 +403,7 @@ func isValidCronField(field string, fieldType int) bool {
 		}
 		return isPositiveInteger(parts[0]) && isPositiveInteger(parts[1])
 	}
-	
+
 	// Check for lists (1,3,5)
 	if strings.Contains(field, ",") {
 		parts := strings.Split(field, ",")
@@ -414,7 +414,7 @@ func isValidCronField(field string, fieldType int) bool {
 		}
 		return true
 	}
-	
+
 	// Must be a number
 	return isPositiveInteger(field)
 }
@@ -437,7 +437,7 @@ func isValidDuration(d string) bool {
 	if d == "" {
 		return false
 	}
-	
+
 	// Try parsing with Go's time.ParseDuration
 	_, err := time.ParseDuration(d)
 	return err == nil
@@ -478,7 +478,7 @@ func addSimpleJob(nc *nats.Conn, args []string) {
 	subject := args[0]
 	interval := args[1]
 	data := ""
-	
+
 	if len(args) > 2 {
 		data = args[2]
 	}
@@ -517,7 +517,7 @@ func addSimpleJob(nc *nats.Conn, args []string) {
 
 	// Create the job
 	jobData, _ := json.Marshal(job)
-	
+
 	msg, err := nc.Request("nats-cron.jobs.create", jobData, 5*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating job: %v\n", err)
@@ -526,12 +526,12 @@ func addSimpleJob(nc *nats.Conn, args []string) {
 
 	var response map[string]string
 	json.Unmarshal(msg.Data, &response)
-	
+
 	if errMsg, exists := response["error"]; exists {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", errMsg)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Job '%s' created successfully\n", subject)
 	fmt.Printf("  Schedule: %s\n", interval)
 	if data != "" {
@@ -545,14 +545,14 @@ func isCronExpression(s string) bool {
 	if !strings.Contains(s, " ") {
 		return false
 	}
-	
+
 	// Check that it doesn't end with duration suffixes
-	if strings.HasSuffix(s, "s") || strings.HasSuffix(s, "m") || 
-	   strings.HasSuffix(s, "h") || strings.HasSuffix(s, "ms") || 
-	   strings.HasSuffix(s, "us") || strings.HasSuffix(s, "ns") {
+	if strings.HasSuffix(s, "s") || strings.HasSuffix(s, "m") ||
+		strings.HasSuffix(s, "h") || strings.HasSuffix(s, "ms") ||
+		strings.HasSuffix(s, "us") || strings.HasSuffix(s, "ns") {
 		return false
 	}
-	
+
 	// If it has spaces and no duration suffix, treat it as a potential cron expression
 	// The actual validation will happen in isValidCronExpression
 	return true

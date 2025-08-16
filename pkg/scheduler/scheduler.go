@@ -16,23 +16,23 @@ import (
 )
 
 type Scheduler struct {
-	nc    *nats.Conn
-	js    nats.JetStreamContext
-	kv    nats.KeyValue
-	gosch *gocron.Scheduler
-	crsch *cron.Cron
-	jobs  map[string]interface{}
+	nc     *nats.Conn
+	js     nats.JetStreamContext
+	kv     nats.KeyValue
+	gosch  *gocron.Scheduler
+	crsch  *cron.Cron
+	jobs   map[string]interface{}
 	logger *zap.Logger
 }
 
 func New(nc *nats.Conn, js nats.JetStreamContext, kv nats.KeyValue, logger *zap.Logger) *Scheduler {
 	return &Scheduler{
-		nc:    nc,
-		js:    js,
-		kv:    kv,
-		gosch: gocron.NewScheduler(time.UTC),
-		crsch: cron.New(cron.WithLocation(time.UTC)),
-		jobs:  make(map[string]interface{}),
+		nc:     nc,
+		js:     js,
+		kv:     kv,
+		gosch:  gocron.NewScheduler(time.UTC),
+		crsch:  cron.New(cron.WithLocation(time.UTC)),
+		jobs:   make(map[string]interface{}),
 		logger: logger,
 	}
 }
@@ -48,11 +48,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.loadExistingJobs(); err != nil {
 		return err
 	}
-	
+
 	if err := s.watchForJobChanges(); err != nil {
 		return err
 	}
-	
+
 	s.logger.Info("Job loading and watching complete", zap.Int("gocron_jobs", len(s.gosch.Jobs())))
 
 	<-ctx.Done()
@@ -67,7 +67,7 @@ func (s *Scheduler) loadExistingJobs() error {
 		s.logger.Error("Error loading KV keys", zap.Error(err))
 		return err
 	}
-	
+
 	for _, key := range keys {
 		entry, err := s.kv.Get(key)
 		if err == nil {
@@ -88,12 +88,12 @@ func (s *Scheduler) watchForJobChanges() error {
 			if update == nil {
 				continue
 			}
-			
+
 			// Handle deletions (when Value() is nil)
 			if update.Value() == nil {
 				subject := update.Key()
 				s.logger.Info("Job deleted, removing from scheduler", zap.String("subject", subject))
-				
+
 				// Remove from active jobs if running
 				if existing, found := s.jobs[subject]; found {
 					switch e := existing.(type) {
@@ -106,12 +106,12 @@ func (s *Scheduler) watchForJobChanges() error {
 				}
 				continue
 			}
-			
+
 			// Handle additions/updates
 			s.scheduleJob(update.Value())
 		}
 	}()
-	
+
 	return nil
 }
 
@@ -140,7 +140,7 @@ func (s *Scheduler) scheduleJob(data []byte) {
 	run := func() {
 		s.logger.Info("Executing job", zap.String("subject", jobCopy.Target.Subject))
 		now := time.Now()
-		
+
 		// Generate payload data - use ULID if no data specified
 		var payloadData []byte
 		if jobCopy.Payload.Data == "" {
@@ -151,7 +151,7 @@ func (s *Scheduler) scheduleJob(data []byte) {
 		} else {
 			payloadData = []byte(jobCopy.Payload.Data)
 		}
-		
+
 		err := s.nc.Publish(jobCopy.Target.Subject, payloadData)
 		if err != nil {
 			s.logger.Error("Publish failed", zap.String("subject", jobCopy.Target.Subject), zap.Error(err))
@@ -225,13 +225,13 @@ func (s *Scheduler) GetJobs() ([]JobStatus, error) {
 		}
 		return nil, err
 	}
-	
+
 	for _, key := range keys {
 		entry, err := s.kv.Get(key)
 		if err != nil {
 			continue
 		}
-		
+
 		var job JobDefinition
 		if json.Unmarshal(entry.Value(), &job) == nil {
 			statuses = append(statuses, JobStatus{
@@ -249,12 +249,12 @@ func (s *Scheduler) GetJob(subject string) (*JobDefinition, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var job JobDefinition
 	if err := json.Unmarshal(entry.Value(), &job); err != nil {
 		return nil, err
 	}
-	
+
 	return &job, nil
 }
 
@@ -263,21 +263,21 @@ func (s *Scheduler) CreateJob(data []byte) error {
 	if err := json.Unmarshal(data, &job); err != nil {
 		return err
 	}
-	
+
 	if job.Target.Subject == "" {
 		return fmt.Errorf("job subject is required")
 	}
-	
+
 	// Validate schedule
 	if err := s.validateSchedule(job.Schedule); err != nil {
 		return fmt.Errorf("invalid schedule: %w", err)
 	}
-	
+
 	// Check if job already exists
 	if _, err := s.kv.Get(job.Target.Subject); err == nil {
 		return fmt.Errorf("job with subject %s already exists", job.Target.Subject)
 	}
-	
+
 	jobData, _ := json.Marshal(job)
 	_, err := s.kv.Create(job.Target.Subject, jobData)
 	return err
@@ -288,16 +288,16 @@ func (s *Scheduler) UpdateJob(data []byte) error {
 	if err := json.Unmarshal(data, &job); err != nil {
 		return err
 	}
-	
+
 	if job.Target.Subject == "" {
 		return fmt.Errorf("job subject is required")
 	}
-	
+
 	// Validate schedule
 	if err := s.validateSchedule(job.Schedule); err != nil {
 		return fmt.Errorf("invalid schedule: %w", err)
 	}
-	
+
 	jobData, _ := json.Marshal(job)
 	_, err := s.kv.Put(job.Target.Subject, jobData)
 	return err
@@ -314,7 +314,7 @@ func (s *Scheduler) DeleteJob(subject string) error {
 		}
 		delete(s.jobs, subject)
 	}
-	
+
 	return s.kv.Delete(subject)
 }
 
@@ -323,13 +323,13 @@ func (s *Scheduler) DeleteJob(subject string) error {
 func (s *Scheduler) DeleteJobsWithPattern(pattern string) ([]string, error) {
 	var deleted []string
 	var lastError error
-	
+
 	// Get all job keys
 	keys, err := s.kv.Keys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get job keys: %w", err)
 	}
-	
+
 	// Find matching subjects
 	var matches []string
 	for _, key := range keys {
@@ -337,7 +337,7 @@ func (s *Scheduler) DeleteJobsWithPattern(pattern string) ([]string, error) {
 			matches = append(matches, key)
 		}
 	}
-	
+
 	// Delete each matching job
 	for _, subject := range matches {
 		err := s.DeleteJob(subject)
@@ -349,7 +349,7 @@ func (s *Scheduler) DeleteJobsWithPattern(pattern string) ([]string, error) {
 			s.logger.Info("Deleted job via pattern", zap.String("subject", subject), zap.String("pattern", pattern))
 		}
 	}
-	
+
 	return deleted, lastError
 }
 
@@ -366,21 +366,21 @@ func matchesNATSPattern(subject, pattern string) bool {
 	if subject == pattern {
 		return true
 	}
-	
+
 	// No wildcards, must be exact match
 	if !strings.Contains(pattern, "*") && !strings.Contains(pattern, ">") {
 		return false
 	}
-	
+
 	subjectTokens := strings.Split(subject, ".")
 	patternTokens := strings.Split(pattern, ".")
-	
+
 	return matchTokens(subjectTokens, patternTokens)
 }
 
 func matchTokens(subject, pattern []string) bool {
 	si, pi := 0, 0
-	
+
 	for pi < len(pattern) && si < len(subject) {
 		switch pattern[pi] {
 		case "*":
@@ -399,7 +399,7 @@ func matchTokens(subject, pattern []string) bool {
 			pi++
 		}
 	}
-	
+
 	// Check if we consumed all tokens correctly
 	if pi < len(pattern) {
 		// Remaining pattern tokens
@@ -410,7 +410,7 @@ func matchTokens(subject, pattern []string) bool {
 		// Unmatched pattern tokens (not ending with >)
 		return false
 	}
-	
+
 	// All pattern tokens consumed, subject should also be fully consumed
 	return si == len(subject)
 }
@@ -427,7 +427,7 @@ func (s *Scheduler) validateSchedule(schedule struct {
 	if schedule.Every != "" && schedule.Cron != "" {
 		return fmt.Errorf("schedule cannot specify both 'every' and 'cron'")
 	}
-	
+
 	// Validate duration format
 	if schedule.Every != "" {
 		_, err := time.ParseDuration(schedule.Every)
@@ -435,7 +435,7 @@ func (s *Scheduler) validateSchedule(schedule struct {
 			return fmt.Errorf("invalid duration '%s': %w", schedule.Every, err)
 		}
 	}
-	
+
 	// Validate cron format
 	if schedule.Cron != "" {
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
@@ -444,6 +444,6 @@ func (s *Scheduler) validateSchedule(schedule struct {
 			return fmt.Errorf("invalid cron expression '%s': %w", schedule.Cron, err)
 		}
 	}
-	
+
 	return nil
 }
