@@ -9,6 +9,7 @@ A distributed, highly available cron scheduler built on NATS JetStream with lead
 
 - **Distributed**: Multiple instances with automatic leader election
 - **High Availability**: Leader failover with no job loss
+- **Embeddable**: Can be embedded directly into Go applications as a library
 - **NATS Micro**: Built on NATS Micro framework for observability and load balancing
 - **Flexible Scheduling**: Supports both interval-based (`every: 30s`) and cron-based (`cron: 0 9 * * *`) scheduling
 - **Simple CLI**: Easy-to-use command-line interface for job management
@@ -21,7 +22,7 @@ NATS Cron is a **message scheduler** that publishes messages to NATS subjects on
 
 ```
 ┌─────────────────┐    schedule    ┌─────────────────┐    message    ┌─────────────────┐
-│   NATS Cron     │────────────────→│   NATS Server   │──────────────→│  Worker Services │
+│   NATS Cron     │───────────────→│   NATS Server   │──────────────→│  Worker Services│
 │   Scheduler     │                │                 │               │                 │
 └─────────────────┘                └─────────────────┘               └─────────────────┘
 ```
@@ -135,6 +136,56 @@ For quick job creation without writing JSON files:
 ```
 
 **Note:** The CLI now uses the subject as the primary identifier - no more separate IDs to manage!
+
+## Embedding in Go Applications
+
+NATS Cron can be embedded directly into your Go applications as a library:
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "log"
+    
+    "github.com/trader7/nats-cron/pkg/server"
+)
+
+func main() {
+    // Create and start embedded scheduler
+    srv, err := server.New(server.DefaultOptions())
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    ctx := context.Background()
+    srv.Start(ctx)
+    defer srv.Stop()
+    
+    // Create a scheduled job
+    jobData, _ := json.Marshal(map[string]interface{}{
+        "target": map[string]string{"subject": "my.app.task"},
+        "payload": map[string]string{"data": "Hello World"},
+        "schedule": map[string]string{"every": "30s"},
+    })
+    
+    srv.GetScheduler().CreateJob(jobData)
+    
+    // Your app logic here...
+    srv.Wait()
+}
+```
+
+### Embedding Benefits
+
+- **No separate process**: Scheduler runs inside your application
+- **Shared NATS connection**: Reuse existing connections
+- **Custom configuration**: Full control over settings
+- **Direct API access**: No need for CLI or HTTP calls
+- **Graceful integration**: Follows your app's lifecycle
+
+See [examples/embedded/](examples/embedded/) for comprehensive embedding examples.
 
 ## NATS Micro Benefits
 
