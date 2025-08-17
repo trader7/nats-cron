@@ -77,8 +77,8 @@ func DefaultOptions() *Options {
 		ServiceName:          "nats-cron",
 		ServiceVersion:       "1.0.0",
 		InstanceID:           hostname,
-		JobsBucketName:       "scheduler_jobs",
-		ElectionBucketName:   "scheduler_leader",
+		JobsBucketName:       "nats-cron-jobs",
+		ElectionBucketName:   "nats-cron-leader",
 		LogLevel:             "info",
 		EnableMicroService:   true,
 		EnableLeaderElection: true,
@@ -164,7 +164,7 @@ func New(opts *Options) (*Server, error) {
 
 	// Create election manager if enabled
 	if opts.EnableLeaderElection {
-		server.election = election.New(server.js, opts.InstanceID, server.logger)
+		server.election = election.New(server.js, opts.InstanceID, opts.ElectionBucketName, server.logger)
 	}
 
 	return server, nil

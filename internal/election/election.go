@@ -10,23 +10,25 @@ import (
 )
 
 type Manager struct {
-	js       nats.JetStreamContext
-	id       string
-	logger   *zap.Logger
-	elector  election.Election
-	isLeader bool
+	js         nats.JetStreamContext
+	id         string
+	bucketName string
+	logger     *zap.Logger
+	elector    election.Election
+	isLeader   bool
 }
 
-func New(js nats.JetStreamContext, instanceID string, logger *zap.Logger) *Manager {
+func New(js nats.JetStreamContext, instanceID, bucketName string, logger *zap.Logger) *Manager {
 	return &Manager{
-		js:     js,
-		id:     instanceID,
-		logger: logger,
+		js:         js,
+		id:         instanceID,
+		bucketName: bucketName,
+		logger:     logger,
 	}
 }
 
 func (m *Manager) Start(ctx context.Context, onLeader func(context.Context)) {
-	bucketName := "scheduler_leader"
+	bucketName := m.bucketName
 
 	// Create election bucket with fast failover TTL (minimum allowed is 30s)
 	kv, err := m.js.CreateKeyValue(&nats.KeyValueConfig{
