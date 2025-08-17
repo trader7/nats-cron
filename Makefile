@@ -1,8 +1,8 @@
 .PHONY: build clean test fmt vet install dev docker help
 
 # Variables
-BINARY_SERVER=nats-cron
-BINARY_CLI=nats-cron-cli
+BINARY_SERVER=nats-cron-server
+BINARY_CLI=nats-cron
 VERSION?=$(shell git describe --tags --always --dirty)
 BUILD_TIME?=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS=-ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
@@ -15,17 +15,17 @@ build: build-server build-cli
 
 build-server:
 	@echo "Building server..."
-	go build ${LDFLAGS} -o bin/${BINARY_SERVER} ./cmd/nats-cron
+	go build ${LDFLAGS} -o bin/${BINARY_SERVER} ./cmd/nats-cron-server
 
 build-cli:
 	@echo "Building CLI..."
-	go build ${LDFLAGS} -o bin/${BINARY_CLI} ./cmd/nats-cron-cli
+	go build ${LDFLAGS} -o bin/${BINARY_CLI} ./cmd/nats-cron
 
 ## Install binaries to $GOPATH/bin
 install:
 	@echo "Installing binaries..."
+	go install ${LDFLAGS} ./cmd/nats-cron-server
 	go install ${LDFLAGS} ./cmd/nats-cron
-	go install ${LDFLAGS} ./cmd/nats-cron-cli
 
 ## Clean build artifacts
 clean:
@@ -61,7 +61,7 @@ lint:
 ## Development mode - run server with auto-restart
 dev:
 	@echo "Starting development server..."
-	go run ./cmd/nats-cron
+	go run ./cmd/nats-cron-server
 
 ## Create example job file
 example:

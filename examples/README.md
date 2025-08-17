@@ -28,17 +28,17 @@ docker-compose up -d
 
 # Or run locally
 nats-server -js &
-./bin/nats-cron &
+./bin/nats-cron-server &
 ```
 
 ### 2. Create a Job
 
 ```bash
 # Create a database cleanup job
-./bin/nats-cron-cli create examples/use-cases/database-cleanup.json
+./bin/nats-cron create examples/use-cases/database-cleanup.json
 
 # List active jobs
-./bin/nats-cron-cli list
+./bin/nats-cron list
 ```
 
 ### 3. Run a Worker

@@ -11,8 +11,8 @@ RUN go mod download
 COPY . .
 
 # Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o nats-cron-server ./cmd/nats-cron-server
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o nats-cron ./cmd/nats-cron
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o nats-cron-cli ./cmd/nats-cron-cli
 
 # Final stage
 FROM alpine:latest
@@ -23,8 +23,8 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /root/
 
 # Copy the binaries from builder stage
+COPY --from=builder /app/nats-cron-server .
 COPY --from=builder /app/nats-cron .
-COPY --from=builder /app/nats-cron-cli .
 
 # Create non-root user
 RUN adduser -D -s /bin/sh nats-cron
@@ -34,4 +34,4 @@ USER nats-cron
 EXPOSE 4222
 
 # Default command
-CMD ["./nats-cron"]
+CMD ["./nats-cron-server"]

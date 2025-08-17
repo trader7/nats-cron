@@ -48,7 +48,7 @@ make build
 nats-server -js &
 
 # Start NATS Cron scheduler
-./bin/nats-cron &
+./bin/nats-cron-server &
 ```
 
 ### 2. Create a Worker Service
@@ -100,13 +100,13 @@ cat > cleanup-job.json << EOF
 EOF
 
 # Schedule the job
-./bin/nats-cron-cli create cleanup-job.json
+./bin/nats-cron create cleanup-job.json
 
 # List active jobs
-./bin/nats-cron-cli list
+./bin/nats-cron list
 
 # Check service status (shows which instance is leader)
-./bin/nats-cron-cli status
+./bin/nats-cron status
 ```
 
 ### 4. Run Your Worker
@@ -123,16 +123,16 @@ For quick job creation without writing JSON files:
 
 ```bash
 # Add a simple interval job
-./bin/nats-cron-cli add system.heartbeat 30s
+./bin/nats-cron add system.heartbeat 30s
 
 # Add a job with JSON payload  
-./bin/nats-cron-cli add database.cleanup 1h '{"table":"sessions","older_than":"7d"}'
+./bin/nats-cron add database.cleanup 1h '{"table":"sessions","older_than":"7d"}'
 
 # Add a cron-based job
-./bin/nats-cron-cli add reports.daily "0 9 * * *"
+./bin/nats-cron add reports.daily "0 9 * * *"
 
 # List all jobs
-./bin/nats-cron-cli list
+./bin/nats-cron list
 ```
 
 **Note:** The CLI now uses the subject as the primary identifier - no more separate IDs to manage!
