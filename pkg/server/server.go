@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
+	"github.com/robfig/cron/v3"
 	"github.com/trader7/nats-cron/internal/election"
 	"github.com/trader7/nats-cron/pkg/config"
 	"github.com/trader7/nats-cron/pkg/scheduler"
@@ -22,7 +24,7 @@ type Server struct {
 	nc        *nats.Conn
 	js        nats.JetStreamContext
 	kv        nats.KeyValue
-	scheduler *scheduler.Scheduler
+	scheduler *scheduler.Scheduler // nil when not leader
 	election  *election.Manager
 	service   micro.Service
 	logger    *zap.Logger
@@ -159,8 +161,7 @@ func New(opts *Options) (*Server, error) {
 	}
 	server.kv = kv
 
-	// Create scheduler
-	server.scheduler = scheduler.New(server.nc, server.js, server.kv, server.logger)
+	// Scheduler will be created when becoming leader
 
 	// Create election manager if enabled
 	if opts.EnableLeaderElection {
@@ -211,14 +212,33 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start leader election if enabled
 	if s.options.EnableLeaderElection && s.election != nil {
 		go s.election.Start(s.ctx, func(leaderCtx context.Context) {
-			s.logger.Info("Elected as leader - starting scheduler")
+			s.logger.Info("Elected as leader - creating and starting scheduler")
+			
+			// Create scheduler when becoming leader
+			s.mu.Lock()
+			s.scheduler = scheduler.New(s.nc, s.js, s.kv, s.logger)
+			s.mu.Unlock()
+			
+			// Start scheduler
 			if err := s.scheduler.Run(leaderCtx); err != nil {
 				s.logger.Error("Scheduler error", zap.Error(err))
 			}
+			
+			// Clean up scheduler when losing leadership
+			s.mu.Lock()
+			s.scheduler = nil
+			s.mu.Unlock()
+			s.logger.Info("Lost leadership - scheduler cleaned up")
 		})
 	} else {
-		// If no leader election, start scheduler directly
+		// If no leader election, create and start scheduler directly
 		go func() {
+			s.logger.Info("No leader election - creating and starting scheduler")
+			
+			s.mu.Lock()
+			s.scheduler = scheduler.New(s.nc, s.js, s.kv, s.logger)
+			s.mu.Unlock()
+			
 			if err := s.scheduler.Run(s.ctx); err != nil {
 				s.logger.Error("Scheduler error", zap.Error(err))
 			}
@@ -282,7 +302,10 @@ func (s *Server) IsLeader() bool {
 }
 
 // GetScheduler returns the underlying scheduler instance for direct job management
+// Returns nil if this instance is not the leader
 func (s *Server) GetScheduler() *scheduler.Scheduler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.scheduler
 }
 
@@ -293,11 +316,248 @@ func (s *Server) Wait() {
 	}
 }
 
+// Job management methods - these work on any instance by accessing KV directly
+
+func (s *Server) GetJobs() ([]scheduler.JobStatus, error) {
+	var statuses []scheduler.JobStatus
+	keys, err := s.kv.Keys()
+	if err != nil {
+		// If no keys found, return empty list instead of error
+		if err.Error() == "nats: no keys found" {
+			return statuses, nil
+		}
+		return nil, err
+	}
+
+	for _, key := range keys {
+		entry, err := s.kv.Get(key)
+		if err != nil {
+			continue
+		}
+
+		var job scheduler.JobDefinition
+		if json.Unmarshal(entry.Value(), &job) == nil {
+			statuses = append(statuses, scheduler.JobStatus{
+				Subject: job.Subject,
+			})
+		}
+	}
+	return statuses, nil
+}
+
+func (s *Server) GetJob(subject string) (*scheduler.JobDefinition, error) {
+	entry, err := s.kv.Get(subject)
+	if err != nil {
+		return nil, err
+	}
+
+	var job scheduler.JobDefinition
+	if err := json.Unmarshal(entry.Value(), &job); err != nil {
+		return nil, err
+	}
+
+	return &job, nil
+}
+
+func (s *Server) CreateJob(data []byte) error {
+	var job scheduler.JobDefinition
+	if err := json.Unmarshal(data, &job); err != nil {
+		return err
+	}
+
+	if job.Subject == "" {
+		return fmt.Errorf("job subject is required")
+	}
+
+	// Validate schedule
+	if err := s.validateSchedule(job.Schedule); err != nil {
+		return fmt.Errorf("invalid schedule: %w", err)
+	}
+
+	// Check if job already exists
+	if _, err := s.kv.Get(job.Subject); err == nil {
+		s.logger.Error("Duplicate job creation attempted", zap.String("subject", job.Subject))
+		return fmt.Errorf("job with subject %s already exists", job.Subject)
+	}
+
+	jobData, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job: %w", err)
+	}
+
+	_, err = s.kv.Create(job.Subject, jobData)
+	if err != nil {
+		return fmt.Errorf("failed to create job in KV store: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) UpdateJob(data []byte) error {
+	var job scheduler.JobDefinition
+	if err := json.Unmarshal(data, &job); err != nil {
+		return err
+	}
+
+	if job.Subject == "" {
+		return fmt.Errorf("job subject is required")
+	}
+
+	// Validate schedule
+	if err := s.validateSchedule(job.Schedule); err != nil {
+		return fmt.Errorf("invalid schedule: %w", err)
+	}
+
+	if job.Subject == "" {
+		return fmt.Errorf("job subject cannot be empty")
+	}
+
+	jobData, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job: %w", err)
+	}
+
+	_, err = s.kv.Put(job.Subject, jobData)
+	if err != nil {
+		return fmt.Errorf("failed to update job in KV store: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) DeleteJob(subject string) error {
+	return s.kv.Delete(subject)
+}
+
+// DeleteJobsWithPattern deletes all jobs matching a NATS wildcard pattern
+// Returns list of deleted job subjects and any error
+func (s *Server) DeleteJobsWithPattern(pattern string) ([]string, error) {
+	var deleted []string
+	var lastError error
+
+	// Get all job keys
+	keys, err := s.kv.Keys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job keys: %w", err)
+	}
+
+	// Find matching subjects
+	var matches []string
+	for _, key := range keys {
+		if matchesNATSPattern(key, pattern) {
+			matches = append(matches, key)
+		}
+	}
+
+	// Delete each matching job
+	for _, subject := range matches {
+		err := s.DeleteJob(subject)
+		if err != nil {
+			s.logger.Error("Failed to delete job", zap.String("subject", subject), zap.Error(err))
+			lastError = err
+		} else {
+			deleted = append(deleted, subject)
+			s.logger.Info("Deleted job via pattern", zap.String("subject", subject), zap.String("pattern", pattern))
+		}
+	}
+
+	return deleted, lastError
+}
+
+// validateSchedule validates job schedule configuration
+func (s *Server) validateSchedule(schedule struct {
+	Every string `json:"every,omitempty"`
+	Cron  string `json:"cron,omitempty"`
+}) error {
+	// Must have exactly one schedule type
+	if schedule.Every == "" && schedule.Cron == "" {
+		return fmt.Errorf("schedule must specify either 'every' or 'cron'")
+	}
+	if schedule.Every != "" && schedule.Cron != "" {
+		return fmt.Errorf("schedule cannot specify both 'every' and 'cron'")
+	}
+
+	// Validate duration format
+	if schedule.Every != "" {
+		_, err := time.ParseDuration(schedule.Every)
+		if err != nil {
+			return fmt.Errorf("invalid duration '%s': %w", schedule.Every, err)
+		}
+	}
+
+	// Validate cron format
+	if schedule.Cron != "" {
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		_, err := parser.Parse(schedule.Cron)
+		if err != nil {
+			return fmt.Errorf("invalid cron expression '%s': %w", schedule.Cron, err)
+		}
+	}
+
+	return nil
+}
+
+// matchesNATSPattern checks if a subject matches a NATS wildcard pattern
+// Supports NATS wildcards:
+// - * matches exactly one token (segment between dots)
+// - > matches one or more trailing tokens
+func matchesNATSPattern(subject, pattern string) bool {
+	// Exact match case
+	if subject == pattern {
+		return true
+	}
+
+	// No wildcards, must be exact match
+	if !strings.Contains(pattern, "*") && !strings.Contains(pattern, ">") {
+		return false
+	}
+
+	subjectTokens := strings.Split(subject, ".")
+	patternTokens := strings.Split(pattern, ".")
+
+	return matchTokens(subjectTokens, patternTokens)
+}
+
+func matchTokens(subject, pattern []string) bool {
+	si, pi := 0, 0
+
+	for pi < len(pattern) && si < len(subject) {
+		switch pattern[pi] {
+		case "*":
+			// * matches exactly one token
+			si++
+			pi++
+		case ">":
+			// > matches remaining tokens, must be last in pattern
+			return pi == len(pattern)-1
+		default:
+			// Literal token must match exactly
+			if subject[si] != pattern[pi] {
+				return false
+			}
+			si++
+			pi++
+		}
+	}
+
+	// Check if we consumed all tokens correctly
+	if pi < len(pattern) {
+		// Remaining pattern tokens
+		if len(pattern)-pi == 1 && pattern[pi] == ">" {
+			// Pattern ends with >, matches any remaining subject tokens
+			return true
+		}
+		// Unmatched pattern tokens (not ending with >)
+		return false
+	}
+
+	// All pattern tokens consumed, subject should also be fully consumed
+	return si == len(subject)
+}
+
 // addServiceEndpoints adds the NATS micro service endpoints
 func (s *Server) addServiceEndpoints() error {
 	// Job management endpoints
 	if err := s.service.AddEndpoint("jobs-list", micro.HandlerFunc(func(req micro.Request) {
-		jobs, err := s.scheduler.GetJobs()
+		jobs, err := s.GetJobs()
 		if err != nil {
 			req.Error("500", "Failed to get jobs", []byte(err.Error()))
 			return
@@ -308,14 +568,11 @@ func (s *Server) addServiceEndpoints() error {
 	}
 
 	if err := s.service.AddEndpoint("jobs-create", micro.HandlerFunc(func(req micro.Request) {
-		err := s.scheduler.CreateJob(req.Data())
+		err := s.CreateJob(req.Data())
 		if err != nil {
 			req.RespondJSON(map[string]string{"error": err.Error()})
 			return
 		}
-
-		// Manually trigger job scheduling since KV watch might not catch it
-		s.scheduler.ScheduleJobFromData(req.Data())
 
 		req.RespondJSON(map[string]string{"status": "created"})
 	}), micro.WithEndpointSubject("nats-cron.jobs.create")); err != nil {
@@ -323,7 +580,7 @@ func (s *Server) addServiceEndpoints() error {
 	}
 
 	if err := s.service.AddEndpoint("jobs-update", micro.HandlerFunc(func(req micro.Request) {
-		err := s.scheduler.UpdateJob(req.Data())
+		err := s.UpdateJob(req.Data())
 		if err != nil {
 			req.Error("400", "Failed to update job", []byte(err.Error()))
 			return
@@ -342,7 +599,7 @@ func (s *Server) addServiceEndpoints() error {
 			return
 		}
 
-		err := s.scheduler.DeleteJob(payload.Subject)
+		err := s.DeleteJob(payload.Subject)
 		if err != nil {
 			req.Error("400", "Failed to delete job", []byte(err.Error()))
 			return
@@ -361,7 +618,7 @@ func (s *Server) addServiceEndpoints() error {
 			return
 		}
 
-		deleted, err := s.scheduler.DeleteJobsWithPattern(payload.Pattern)
+		deleted, err := s.DeleteJobsWithPattern(payload.Pattern)
 		if err != nil {
 			req.Error("400", "Failed to delete jobs", []byte(err.Error()))
 			return
@@ -384,7 +641,7 @@ func (s *Server) addServiceEndpoints() error {
 			return
 		}
 
-		job, err := s.scheduler.GetJob(payload.Subject)
+		job, err := s.GetJob(payload.Subject)
 		if err != nil {
 			req.Error("404", "Job not found", []byte(err.Error()))
 			return
@@ -398,7 +655,17 @@ func (s *Server) addServiceEndpoints() error {
 	if err := s.service.AddEndpoint("status", micro.HandlerFunc(func(req micro.Request) {
 		jobCount := 0
 		if s.IsLeader() {
-			jobCount = len(s.scheduler.GetActiveJobs())
+			s.mu.RLock()
+			if s.scheduler != nil {
+				jobCount = len(s.scheduler.GetActiveJobs())
+			}
+			s.mu.RUnlock()
+		} else {
+			// For non-leaders, count jobs from KV store
+			jobs, err := s.GetJobs()
+			if err == nil {
+				jobCount = len(jobs)
+			}
 		}
 		status := map[string]interface{}{
 			"service":   s.options.ServiceName,
