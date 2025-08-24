@@ -310,7 +310,7 @@ func (s *Server) addServiceEndpoints() error {
 	if err := s.service.AddEndpoint("jobs-create", micro.HandlerFunc(func(req micro.Request) {
 		err := s.scheduler.CreateJob(req.Data())
 		if err != nil {
-			req.Error("400", "Failed to create job", []byte(err.Error()))
+			req.RespondJSON(map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -396,10 +396,14 @@ func (s *Server) addServiceEndpoints() error {
 
 	// Service status endpoint
 	if err := s.service.AddEndpoint("status", micro.HandlerFunc(func(req micro.Request) {
+		jobCount := 0
+		if s.IsLeader() {
+			jobCount = len(s.scheduler.GetActiveJobs())
+		}
 		status := map[string]interface{}{
 			"service":   s.options.ServiceName,
 			"is_leader": s.IsLeader(),
-			"jobs":      len(s.scheduler.GetActiveJobs()),
+			"jobs":      jobCount,
 		}
 		req.RespondJSON(status)
 	}), micro.WithEndpointSubject("nats-cron.status")); err != nil {

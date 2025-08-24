@@ -38,7 +38,7 @@ func New(nc *nats.Conn, js nats.JetStreamContext, kv nats.KeyValue, logger *zap.
 }
 
 func (s *Scheduler) Run(ctx context.Context) error {
-	// Start schedulers FIRST, before loading jobs
+	// Start schedulers
 	s.logger.Info("Starting gocron scheduler")
 	s.gosch.StartAsync()
 	s.logger.Info("Starting cron scheduler")
@@ -78,7 +78,7 @@ func (s *Scheduler) loadExistingJobs() error {
 }
 
 func (s *Scheduler) watchForJobChanges() error {
-	watch, err := s.kv.Watch("")
+	watch, err := s.kv.Watch(">")
 	if err != nil {
 		return err
 	}
@@ -89,8 +89,8 @@ func (s *Scheduler) watchForJobChanges() error {
 				continue
 			}
 
-			// Handle deletions (when Value() is nil)
-			if update.Value() == nil {
+			// Handle deletions (check operation type)
+			if update.Operation() == nats.KeyValueDelete || update.Operation() == nats.KeyValuePurge {
 				subject := update.Key()
 				s.logger.Info("Job deleted, removing from scheduler", zap.String("subject", subject))
 
@@ -126,7 +126,12 @@ func (s *Scheduler) scheduleJob(data []byte) {
 		return
 	}
 
-	if existing, found := s.jobs[job.Target.Subject]; found {
+	if job.Subject == "" {
+		s.logger.Error("Job has empty subject, skipping")
+		return
+	}
+
+	if existing, found := s.jobs[job.Subject]; found {
 		switch e := existing.(type) {
 		case *gocron.Job:
 			s.gosch.RemoveByReference(e)
@@ -138,80 +143,47 @@ func (s *Scheduler) scheduleJob(data []byte) {
 	// Capture job by value to avoid closure issues
 	jobCopy := job
 	run := func() {
-		s.logger.Info("Executing job", zap.String("subject", jobCopy.Target.Subject))
+		s.logger.Info("Executing job", zap.String("subject", jobCopy.Subject))
 		now := time.Now()
 
-		// Generate payload data - use ULID if no data specified
-		var payloadData []byte
-		if jobCopy.Payload.Data == "" {
-			// Generate a ULID with current timestamp
-			ulidValue := ulid.MustNew(ulid.Timestamp(now), rand.Reader)
-			payloadData = []byte(ulidValue.String())
-			s.logger.Debug("Generated ULID for empty payload", zap.String("subject", jobCopy.Target.Subject), zap.String("ulid", ulidValue.String()))
-		} else {
-			payloadData = []byte(jobCopy.Payload.Data)
-		}
+		// Generate a ULID with current timestamp
+		ulidValue := ulid.MustNew(ulid.Timestamp(now), rand.Reader)
+		payloadData := []byte(ulidValue.String())
+		s.logger.Debug("Generated ULID for job", zap.String("subject", jobCopy.Subject), zap.String("ulid", ulidValue.String()))
 
-		err := s.nc.Publish(jobCopy.Target.Subject, payloadData)
+		err := s.nc.Publish(jobCopy.Subject, payloadData)
 		if err != nil {
-			s.logger.Error("Publish failed", zap.String("subject", jobCopy.Target.Subject), zap.Error(err))
+			s.logger.Error("Publish failed", zap.String("subject", jobCopy.Subject), zap.Error(err))
 		} else {
-			s.logger.Info("Published job", zap.String("subject", jobCopy.Target.Subject))
+			s.logger.Info("Published job", zap.String("subject", jobCopy.Subject))
 		}
 
-		jobCopy.LastRun = now
-		if jobCopy.Schedule.Every != "" {
-			dur, _ := time.ParseDuration(jobCopy.Schedule.Every)
-			jobCopy.NextRun = now.Add(dur)
-		} else if jobCopy.Schedule.Cron != "" {
-			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-			schedule, _ := parser.Parse(jobCopy.Schedule.Cron)
-			jobCopy.NextRun = schedule.Next(now)
-		}
-		s.saveJobState(jobCopy)
 	}
 
 	if job.Schedule.Every != "" {
 		dur, err := time.ParseDuration(job.Schedule.Every)
 		if err != nil {
-			s.logger.Error("Invalid duration", zap.String("subject", job.Target.Subject), zap.Error(err))
+			s.logger.Error("Invalid duration", zap.String("subject", job.Subject), zap.Error(err))
 			return
 		}
-		job.NextRun = time.Now().Add(dur)
 		j, err := s.gosch.Every(dur).Do(run)
 		if err != nil {
-			s.logger.Error("Failed to schedule job", zap.String("subject", job.Target.Subject), zap.Error(err))
+			s.logger.Error("Failed to schedule job", zap.String("subject", job.Subject), zap.Error(err))
 			return
 		}
-		s.jobs[job.Target.Subject] = j
-		s.saveJobState(job)
-		s.logger.Info("Scheduled job", zap.String("subject", job.Target.Subject), zap.String("interval", job.Schedule.Every))
-		s.logger.Debug("Gocron job details", zap.String("subject", job.Target.Subject), zap.Any("gocron_job", j), zap.Int("scheduler_job_count", len(s.gosch.Jobs())))
+		s.jobs[job.Subject] = j
+		s.logger.Info("Scheduled job", zap.String("subject", job.Subject), zap.String("interval", job.Schedule.Every))
+		s.logger.Debug("Gocron job details", zap.String("subject", job.Subject), zap.Any("gocron_job", j), zap.Int("scheduler_job_count", len(s.gosch.Jobs())))
 	} else if job.Schedule.Cron != "" {
-		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-		schedule, err := parser.Parse(job.Schedule.Cron)
-		if err != nil {
-			s.logger.Error("Invalid cron", zap.String("subject", job.Target.Subject), zap.Error(err))
-			return
-		}
-		job.NextRun = schedule.Next(time.Now())
 		id, err := s.crsch.AddFunc(job.Schedule.Cron, run)
 		if err != nil {
-			s.logger.Error("Failed to schedule cron job", zap.String("subject", job.Target.Subject), zap.Error(err))
+			s.logger.Error("Failed to schedule cron job", zap.String("subject", job.Subject), zap.Error(err))
 			return
 		}
-		s.jobs[job.Target.Subject] = id
-		s.saveJobState(job)
-		s.logger.Info("Scheduled cron job", zap.String("subject", job.Target.Subject), zap.String("cron", job.Schedule.Cron))
+		s.jobs[job.Subject] = id
+		s.logger.Info("Scheduled cron job", zap.String("subject", job.Subject), zap.String("cron", job.Schedule.Cron))
 	} else {
-		s.logger.Error("Job has no schedule", zap.String("subject", job.Target.Subject))
-	}
-}
-
-func (s *Scheduler) saveJobState(job JobDefinition) {
-	data, err := json.Marshal(job)
-	if err == nil {
-		s.kv.Put(job.Target.Subject, data)
+		s.logger.Error("Job has no schedule", zap.String("subject", job.Subject))
 	}
 }
 
@@ -235,9 +207,7 @@ func (s *Scheduler) GetJobs() ([]JobStatus, error) {
 		var job JobDefinition
 		if json.Unmarshal(entry.Value(), &job) == nil {
 			statuses = append(statuses, JobStatus{
-				Subject: job.Target.Subject,
-				LastRun: job.LastRun,
-				NextRun: job.NextRun,
+				Subject: job.Subject,
 			})
 		}
 	}
@@ -264,7 +234,7 @@ func (s *Scheduler) CreateJob(data []byte) error {
 		return err
 	}
 
-	if job.Target.Subject == "" {
+	if job.Subject == "" {
 		return fmt.Errorf("job subject is required")
 	}
 
@@ -274,13 +244,21 @@ func (s *Scheduler) CreateJob(data []byte) error {
 	}
 
 	// Check if job already exists
-	if _, err := s.kv.Get(job.Target.Subject); err == nil {
-		return fmt.Errorf("job with subject %s already exists", job.Target.Subject)
+	if _, err := s.kv.Get(job.Subject); err == nil {
+		s.logger.Error("Duplicate job creation attempted", zap.String("subject", job.Subject))
+		return fmt.Errorf("job with subject %s already exists", job.Subject)
 	}
 
-	jobData, _ := json.Marshal(job)
-	_, err := s.kv.Create(job.Target.Subject, jobData)
-	return err
+	jobData, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job: %w", err)
+	}
+
+	_, err = s.kv.Create(job.Subject, jobData)
+	if err != nil {
+		return fmt.Errorf("failed to create job in KV store: %w", err)
+	}
+	return nil
 }
 
 func (s *Scheduler) UpdateJob(data []byte) error {
@@ -289,7 +267,7 @@ func (s *Scheduler) UpdateJob(data []byte) error {
 		return err
 	}
 
-	if job.Target.Subject == "" {
+	if job.Subject == "" {
 		return fmt.Errorf("job subject is required")
 	}
 
@@ -298,9 +276,20 @@ func (s *Scheduler) UpdateJob(data []byte) error {
 		return fmt.Errorf("invalid schedule: %w", err)
 	}
 
-	jobData, _ := json.Marshal(job)
-	_, err := s.kv.Put(job.Target.Subject, jobData)
-	return err
+	if job.Subject == "" {
+		return fmt.Errorf("job subject cannot be empty")
+	}
+
+	jobData, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job: %w", err)
+	}
+
+	_, err = s.kv.Put(job.Subject, jobData)
+	if err != nil {
+		return fmt.Errorf("failed to update job in KV store: %w", err)
+	}
+	return nil
 }
 
 func (s *Scheduler) DeleteJob(subject string) error {

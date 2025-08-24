@@ -1,12 +1,5 @@
 {
-  "id": "etl-user-analytics",
-  "target": {
-    "subject": "pipeline.trigger"
-  },
-  "payload": {
-    "type": "json",
-    "data": "{\"pipeline\":\"user_analytics\",\"source\":{\"type\":\"postgres\",\"table\":\"raw_events\"},\"destination\":{\"type\":\"clickhouse\",\"table\":\"analytics_events\"},\"transformations\":[\"deduplicate\",\"enrich_geo\",\"aggregate_sessions\"],\"batch_size\":10000}"
-  },
+  "subject": "pipeline.trigger",
   "schedule": {
     "cron": "0 * * * *"
   }

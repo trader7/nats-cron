@@ -33,7 +33,7 @@ func (m *Manager) Start(ctx context.Context, onLeader func(context.Context)) {
 	// Create election bucket with fast failover TTL (minimum allowed is 30s)
 	kv, err := m.js.CreateKeyValue(&nats.KeyValueConfig{
 		Bucket: bucketName,
-		TTL:    30 * time.Second, // Minimum TTL for faster failover
+		TTL:    30 * time.Second, // Minimum TTL enforced by nats-kv-leader-elect
 	})
 	if err != nil {
 		// Try to get existing bucket if creation fails

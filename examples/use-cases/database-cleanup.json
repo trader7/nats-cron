@@ -1,12 +1,5 @@
 {
-  "id": "db-cleanup-sessions",
-  "target": {
-    "subject": "database.cleanup"
-  },
-  "payload": {
-    "type": "json",
-    "data": "{\"table\":\"user_sessions\",\"older_than\":\"7d\",\"batch_size\":1000,\"dry_run\":false}"
-  },
+  "subject": "database.cleanup",
   "schedule": {
     "cron": "0 2 * * *"
   }

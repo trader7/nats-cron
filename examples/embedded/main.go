@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/trader7/nats-cron/pkg/server"
 	"github.com/trader7/nats-cron/pkg/scheduler"
+	"github.com/trader7/nats-cron/pkg/server"
 	"go.uber.org/zap"
 )
 
@@ -51,12 +51,7 @@ func basicEmbedding() {
 
 	// Create a simple job
 	jobDef := map[string]interface{}{
-		"target": map[string]string{
-			"subject": "example.heartbeat",
-		},
-		"payload": map[string]string{
-			"data": "ping",
-		},
+		"subject": "example.heartbeat",
 		"schedule": map[string]string{
 			"every": "5s",
 		},
@@ -96,7 +91,7 @@ func customConfiguration() {
 		Logger:               logger,
 		EnableMicroService:   true,
 		EnableLeaderElection: true,
-		ElectionTTL:          15 * time.Second,
+		ElectionTTL:          60 * time.Second,
 		ShutdownTimeout:      10 * time.Second,
 	}
 
@@ -159,8 +154,7 @@ func reusingNATSConnection() {
 
 	// Create a job that publishes to our subscription
 	jobData, _ := json.Marshal(map[string]interface{}{
-		"target": map[string]string{"subject": "myapp.tasks.cleanup"},
-		"payload": map[string]string{"data": `{"action":"cleanup","table":"sessions"}`},
+		"subject":  "myapp.tasks.cleanup",
 		"schedule": map[string]string{"every": "3s"},
 	})
 
@@ -207,8 +201,7 @@ func embeddedMode() {
 
 	// Create jobs directly
 	jobData, _ := json.Marshal(map[string]interface{}{
-		"target":   map[string]string{"subject": "embedded.report"},
-		"payload":  map[string]string{"data": "daily_report"},
+		"subject":  "embedded.report",
 		"schedule": map[string]string{"every": "2s"},
 	})
 
@@ -221,7 +214,7 @@ func embeddedMode() {
 	if err == nil {
 		fmt.Printf("Active jobs: %d\n", len(jobs))
 		for _, job := range jobs {
-			fmt.Printf("  - %s (next: %s)\n", job.Subject, job.NextRun.Format("15:04:05"))
+			fmt.Printf("  - %s\n", job.Subject)
 		}
 	}
 
@@ -312,18 +305,15 @@ func handleHealthCheck(msg *nats.Msg) {
 func setupJobs(sched *scheduler.Scheduler) {
 	jobs := []map[string]interface{}{
 		{
-			"target":   map[string]string{"subject": "reports.daily"},
-			"payload":  map[string]string{"data": `{"type":"sales","format":"pdf"}`},
+			"subject":  "reports.daily",
 			"schedule": map[string]string{"cron": "0 9 * * *"}, // 9 AM daily
 		},
 		{
-			"target":   map[string]string{"subject": "cleanup.database"},
-			"payload":  map[string]string{"data": `{"table":"sessions","older_than":"7d"}`},
+			"subject":  "cleanup.database",
 			"schedule": map[string]string{"cron": "0 2 * * *"}, // 2 AM daily
 		},
 		{
-			"target":   map[string]string{"subject": "monitoring.healthcheck"},
-			"payload":  map[string]string{"data": `{"endpoints":["api","database","cache"]}`},
+			"subject":  "monitoring.healthcheck",
 			"schedule": map[string]string{"every": "30s"},
 		},
 	}
@@ -331,7 +321,7 @@ func setupJobs(sched *scheduler.Scheduler) {
 	for _, job := range jobs {
 		jobData, _ := json.Marshal(job)
 		if err := sched.CreateJob(jobData); err != nil {
-			log.Printf("Failed to create job %s: %v", job["target"].(map[string]string)["subject"], err)
+			log.Printf("Failed to create job %s: %v", job["subject"].(string), err)
 		}
 	}
 

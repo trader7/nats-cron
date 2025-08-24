@@ -1,12 +1,5 @@
 {
-  "id": "database-backup-nightly",
-  "target": {
-    "subject": "backup.start"
-  },
-  "payload": {
-    "type": "json",
-    "data": "{\"databases\":[\"users\",\"orders\",\"inventory\"],\"destination\":\"s3://backups/postgres/\",\"compression\":\"gzip\",\"retention_days\":30,\"notification_channels\":[\"ops-slack\"],\"verify_after_backup\":true}"
-  },
+  "subject": "backup.start",
   "schedule": {
     "cron": "0 1 * * *"
   }

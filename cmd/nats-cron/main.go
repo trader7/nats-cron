@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -13,9 +12,7 @@ import (
 )
 
 type JobStatus struct {
-	Subject string    `json:"subject"`
-	LastRun time.Time `json:"last_run"`
-	NextRun time.Time `json:"next_run"`
+	Subject string `json:"subject"`
 }
 
 func main() {
@@ -65,16 +62,16 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  list, ls                    List all jobs")
 	fmt.Println("  status                      Show service status")
-	fmt.Println("  add <subject> <interval> [data]  Add a simple job")
-	fmt.Println("  create <json-file>          Create a job from JSON file")
-	fmt.Println("  update <json-file>          Update a job from JSON file")
+	fmt.Println("  add <subject> <interval>        Add a new job (fails if exists)")
+	fmt.Println("  create <json-file>          Create a job from JSON file (fails if exists)")
+	fmt.Println("  update <subject> <interval>     Update an existing job")
 	fmt.Println("  delete <subject>            Delete a job")
 	fmt.Println("  get <subject>               Get job details")
 	fmt.Println("  help                        Show this help")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  nats-cron add system.ping 30s")
-	fmt.Println("  nats-cron add db.cleanup 1h '{\"table\":\"sessions\"}'")
+	fmt.Println("  nats-cron update db.cleanup 2h")
 	fmt.Println("  nats-cron add reports.daily \"0 9 * * *\"")
 	fmt.Println("  nats-cron delete \"test.*\"        # Delete all test jobs")
 	fmt.Println("  nats-cron delete \"orders.>\"      # Delete all orders jobs")
@@ -112,20 +109,10 @@ func listJobs(nc *nats.Conn) {
 		return
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "SUBJECT\tLAST RUN\tNEXT RUN\n")
+	fmt.Printf("SUBJECT\n")
 	for _, job := range response.Jobs {
-		lastRun := "never"
-		if !job.LastRun.IsZero() {
-			lastRun = job.LastRun.Format(time.RFC3339)
-		}
-		nextRun := "unknown"
-		if !job.NextRun.IsZero() {
-			nextRun = job.NextRun.Format(time.RFC3339)
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", job.Subject, lastRun, nextRun)
+		fmt.Printf("%s\n", job.Subject)
 	}
-	w.Flush()
 }
 
 func showStatus(nc *nats.Conn) {
@@ -166,22 +153,55 @@ func createJob(nc *nats.Conn, args []string) {
 
 	var response map[string]string
 	json.Unmarshal(msg.Data, &response)
+
+	if errMsg, exists := response["error"]; exists {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", errMsg)
+		os.Exit(1)
+	}
+
 	fmt.Printf("Job created: %s\n", response["status"])
 }
 
 func updateJob(nc *nats.Conn, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing job file\n")
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Error: update requires 2 arguments\n")
+		fmt.Fprintf(os.Stderr, "Usage: nats-cron update <subject> <interval>\n")
 		os.Exit(1)
 	}
 
-	data, err := os.ReadFile(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading job file: %v\n", err)
-		os.Exit(1)
+	subject := args[0]
+	interval := args[1]
+
+	// Build job definition
+	job := map[string]interface{}{
+		"subject": subject,
 	}
 
-	msg, err := nc.Request("nats-cron.jobs.update", data, 5*time.Second)
+	// Validate and determine if interval is cron or duration
+	schedule := map[string]interface{}{}
+	if isCronExpression(interval) {
+		// Validate cron expression
+		if !isValidCronExpression(interval) {
+			fmt.Fprintf(os.Stderr, "Error: invalid cron expression '%s'\n", interval)
+			fmt.Fprintf(os.Stderr, "Cron format: 'minute hour day month weekday' (e.g., '0 9 * * *')\n")
+			os.Exit(1)
+		}
+		schedule["cron"] = interval
+	} else {
+		// Validate duration
+		if !isValidDuration(interval) {
+			fmt.Fprintf(os.Stderr, "Error: invalid duration '%s'\n", interval)
+			fmt.Fprintf(os.Stderr, "Duration format: number + unit (e.g., '30s', '5m', '2h')\n")
+			os.Exit(1)
+		}
+		schedule["every"] = interval
+	}
+	job["schedule"] = schedule
+
+	// Update the job
+	jobData, _ := json.Marshal(job)
+
+	msg, err := nc.Request("nats-cron.jobs.update", jobData, 5*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error updating job: %v\n", err)
 		os.Exit(1)
@@ -189,7 +209,14 @@ func updateJob(nc *nats.Conn, args []string) {
 
 	var response map[string]string
 	json.Unmarshal(msg.Data, &response)
-	fmt.Printf("Job updated: %s\n", response["status"])
+
+	if errMsg, exists := response["error"]; exists {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", errMsg)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Job '%s' updated successfully\n", subject)
+	fmt.Printf("  Schedule: %s\n", interval)
 }
 
 func deleteJob(nc *nats.Conn, args []string) {
@@ -470,28 +497,17 @@ func getJob(nc *nats.Conn, args []string) {
 
 func addSimpleJob(nc *nats.Conn, args []string) {
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Error: add requires at least 2 arguments\n")
-		fmt.Fprintf(os.Stderr, "Usage: nats-cron add <subject> <interval> [data]\n")
+		fmt.Fprintf(os.Stderr, "Error: add requires 2 arguments\n")
+		fmt.Fprintf(os.Stderr, "Usage: nats-cron add <subject> <interval>\n")
 		os.Exit(1)
 	}
 
 	subject := args[0]
 	interval := args[1]
-	data := ""
-
-	if len(args) > 2 {
-		data = args[2]
-	}
 
 	// Build job definition
 	job := map[string]interface{}{
-		"target": map[string]interface{}{
-			"subject": subject,
-		},
-		"payload": map[string]interface{}{
-			"type": "json",
-			"data": data,
-		},
+		"subject": subject,
 	}
 
 	// Validate and determine if interval is cron or duration
@@ -534,9 +550,6 @@ func addSimpleJob(nc *nats.Conn, args []string) {
 
 	fmt.Printf("Job '%s' created successfully\n", subject)
 	fmt.Printf("  Schedule: %s\n", interval)
-	if data != "" {
-		fmt.Printf("  Data: %s\n", data)
-	}
 }
 
 func isCronExpression(s string) bool {

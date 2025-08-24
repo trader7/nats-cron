@@ -18,7 +18,7 @@ A distributed, highly available cron scheduler built on NATS JetStream with lead
 
 ## How It Works
 
-NATS Cron is a **message scheduler** that publishes messages to NATS subjects on a schedule. It doesn't execute jobs directly - instead, it triggers other services that subscribe to these messages.
+NATS Cron is a **message scheduler** that publishes ULID messages to NATS subjects on a schedule. It doesn't execute jobs directly - instead, it triggers other services that subscribe to these messages.
 
 ```
 ┌─────────────────┐    schedule    ┌─────────────────┐    message    ┌─────────────────┐
@@ -58,7 +58,6 @@ nats-server -js &
 package main
 
 import (
-    "encoding/json"
     "log"
     "github.com/nats-io/nats.go"
 )
@@ -69,10 +68,11 @@ func main() {
 
     // Subscribe to cleanup jobs
     nc.Subscribe("database.cleanup", func(msg *nats.Msg) {
-        var job map[string]interface{}
-        json.Unmarshal(msg.Data, &job)
+        ulid := string(msg.Data)
+        log.Printf("Received cleanup job with ULID: %s", ulid)
         
-        log.Printf("Cleaning up table: %s", job["table"])
+        // The subject tells us what to do: database.cleanup
+        // The ULID identifies this specific job execution
         // Do actual cleanup work here...
     })
 
@@ -83,16 +83,13 @@ func main() {
 ### 3. Schedule a Job
 
 ```bash
-# Create job definition
+# Simple CLI approach (recommended)
+./bin/nats-cron add database.cleanup "0 2 * * *"
+
+# Or create job definition file
 cat > cleanup-job.json << EOF
 {
-  "target": {
-    "subject": "database.cleanup"
-  },
-  "payload": {
-    "type": "json",
-    "data": "{\"table\":\"user_sessions\",\"older_than\":\"7d\"}"
-  },
+  "subject": "database.cleanup",
   "schedule": {
     "cron": "0 2 * * *"
   }
@@ -115,18 +112,18 @@ EOF
 go run worker.go
 ```
 
-Now every day at 2 AM, NATS Cron will publish a message to `database.cleanup`, and your worker will receive it and perform the cleanup.
+Now every day at 2 AM, NATS Cron will publish a ULID message to `database.cleanup`, and your worker will receive it and perform the cleanup.
 
-### 5. Or Use the Simple CLI (Alternative to JSON files)
+### 5. Simple CLI Commands
 
-For quick job creation without writing JSON files:
+The CLI is now much simpler with just subject and schedule needed:
 
 ```bash
 # Add a simple interval job
 ./bin/nats-cron add system.heartbeat 30s
 
-# Add a job with JSON payload  
-./bin/nats-cron add database.cleanup 1h '{"table":"sessions","older_than":"7d"}'
+# Add an hourly job  
+./bin/nats-cron add database.cleanup 1h
 
 # Add a cron-based job
 ./bin/nats-cron add reports.daily "0 9 * * *"
@@ -135,7 +132,7 @@ For quick job creation without writing JSON files:
 ./bin/nats-cron list
 ```
 
-**Note:** The CLI now uses the subject as the primary identifier - no more separate IDs to manage!
+**Note:** Jobs are identified by subject - no separate IDs or complex payloads needed!
 
 ## Embedding in Go Applications
 
@@ -165,8 +162,7 @@ func main() {
     
     // Create a scheduled job
     jobData, _ := json.Marshal(map[string]interface{}{
-        "target": map[string]string{"subject": "my.app.task"},
-        "payload": map[string]string{"data": "Hello World"},
+        "subject": "my.app.task",
         "schedule": map[string]string{"every": "30s"},
     })
     
@@ -198,17 +194,11 @@ With NATS Micro framework integration:
 
 ## Job Configuration
 
-Jobs are defined using JSON with the following structure:
+Jobs are defined using simple JSON with just subject and schedule:
 
 ```json
 {
-  "target": {
-    "subject": "my.subject"
-  },
-  "payload": {
-    "type": "json",
-    "data": "{\"message\":\"hello world\"}"
-  },
+  "subject": "my.subject",
   "schedule": {
     "every": "30s"
   }
@@ -254,8 +244,7 @@ Environment variables:
 ### Database Maintenance
 ```json
 {
-  "target": { "subject": "database.cleanup" },
-  "payload": { "data": "{\"table\":\"sessions\",\"older_than\":\"7d\"}" },
+  "subject": "database.cleanup",
   "schedule": { "cron": "0 2 * * *" }
 }
 ```
@@ -263,8 +252,7 @@ Environment variables:
 ### Health Monitoring
 ```json
 {
-  "target": { "subject": "monitoring.health_check" },
-  "payload": { "data": "{\"service\":\"api\",\"endpoint\":\"https://api.example.com/health\"}" },
+  "subject": "monitoring.health_check",
   "schedule": { "every": "30s" }
 }
 ```
@@ -272,8 +260,7 @@ Environment variables:
 ### Report Generation
 ```json
 {
-  "target": { "subject": "reports.generate" },
-  "payload": { "data": "{\"type\":\"sales\",\"recipients\":[\"team@company.com\"]}" },
+  "subject": "reports.generate",
   "schedule": { "cron": "0 9 * * MON" }
 }
 ```
@@ -281,11 +268,12 @@ Environment variables:
 ### Cache Warming
 ```json
 {
-  "target": { "subject": "cache.warm" },
-  "payload": { "data": "{\"keys\":[\"popular_products\",\"categories\"]}" },
+  "subject": "cache.warm",
   "schedule": { "every": "15m" }
 }
 ```
+
+**Workers determine what to do based on the subject name**. The ULID in the message payload helps track individual job executions.
 
 ## Architecture
 
@@ -370,7 +358,7 @@ The scheduler exposes NATS request-reply endpoints:
 - `nats-cron.jobs.delete` - Delete a job (by subject)
 - `nats-cron.status` - Get service status
 
-**Note:** Jobs are now identified by their subject rather than a separate ID field. This simplifies the API and makes it more intuitive.
+**Note:** Jobs are identified by their subject. Each execution sends a ULID in the message payload for tracking individual runs.
 
 ## Contributing
 
